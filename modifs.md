@@ -29,3 +29,12 @@ un robot qui recentre la souris au centre de l'écran à chaque frame.
 
 9- Ajout d'un fichier Debug.pde avec des fonctions permettant de voir les zones de collision du joueur de des murs,
 et correction des bugs lié aux collisions.
+
+10- modification de la detection de l'accès au prochain niveau. Ajout d'un mur à la sortie et d'une échelle pour monter
+au prochain niveau.
+
+11 - ajout d'une momie pour l'instant représenté par une sphere et ajout des fonctions basiques comme le mouvement ou 
+la détection des murs (pareil que pour le joueur)
+
+12 - amélioration du déplacement de la momie, elle se déplace maintenant aléatoirement en changeant de direction à chaque
+fois qu'elle touche un mur.

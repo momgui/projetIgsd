@@ -4,7 +4,9 @@ import java.awt.AWTException;
 Robot robot;
 boolean isWarping = false;
 
+int scene = 0; // 0 : Désert, 1 : Pyramide/Labyrinthe
 
+boolean[][] discovered;
 float playerRadius = 0.3; 
 Debug debug;
 
@@ -12,7 +14,10 @@ Debug debug;
 int dirX = 0, dirY = 1;
 
 // Variables de position et de direction
-float posX = 1.0, posY = 1.0;  // Position initiale dans la grille du labyrinthe
+float posX = 19.0, posY = 18.0;  // Position initiale dans la grille du labyrinthe
+
+// Pyramide comme asset
+Pyramide pyramide;
 float heading = 0;           // Angle horizontal (en radians)
 float pitch = 0;             // Angle vertical (en radians)
 float moveSpeed = 0.05;      // Vitesse de déplacement
@@ -28,20 +33,23 @@ char sides[][][];
 int level = 0;
 
 // Formes et texture
-PShape laby0;
-PShape ceiling0;
-PShape ceiling1;
+PShape laby0, ceiling0, ladder0;
 PImage texture0;
 
 // Dimensions pré-calculées
 float wallH;
 
 
+Momie momie;
+
 void setup() { 
   pixelDensity(2);
   randomSeed(2);
   texture0 = loadImage("stones.tif");
   fullScreen(P3D);  // Mode plein écran en 3D
+  
+  // Création de la pyramide (position, dimensions)
+  pyramide = new Pyramide(labSize * wallH, 0, labSize * wallH, 200, 200, 150, 500);
 
   // Initialisation des tableaux
   labyrinthe = new char[labSize][labSize];
@@ -71,6 +79,16 @@ void setup() {
   buildShapes();
   
   debug = new Debug();
+  
+  discovered = new boolean[labSize][labSize];
+  for (int j = 0; j < labSize; j++) {
+    for (int i = 0; i < labSize; i++) {
+      discovered[j][i] = false;
+    }
+  }
+  discovered[int(posY)][int(posX)] = true;
+  
+  momie = new Momie(19.0,18.0);
 }
 
 
@@ -116,7 +134,8 @@ void generateLabyrinth(int level) {
   if (level == 0) {
     labyrinthe[0][1] = ' ';             // entrée  
   }
-  labyrinthe[labSize - 2][labSize - 1] = ' ';  // sortie
+  // Marquer la sortie par 'X'
+  labyrinthe[labSize - 2][labSize - 1] = 'X';
   
   // Détermination des "sides" en fonction des murs autour des cases vides
   for (int j = 1; j < labSize - 1; j++) {
@@ -141,46 +160,42 @@ void generateLabyrinth(int level) {
 
 
 void nextLevel() {
-  // Exemple : diminuer la taille pour le niveau suivant tout en gardant un nombre impair
   labSize -= 4;  
   posX = 1;
   posY = 1;
-  // Réallocation des tableaux avec la nouvelle taille
   labyrinthe = new char[labSize][labSize];
   sides = new char[labSize][labSize][4];
   level++;
   generateLabyrinth(level);
   
-  // Mise à jour des dimensions
+  // Mise à jour des dimensions et reconstruction des formes
   wallH = (float) width / labSize;
-  // Vous pouvez aussi reconstruire vos formes si nécessaire
   buildShapes();
 }
 
 
 
 
-
 void buildShapes() {
-  // Initialisation des formes pour les plafonds
-  ceiling0 = createShape();
-  ceiling1 = createShape();
-  ceiling0.beginShape(QUADS);
-  ceiling1.beginShape(QUADS);
-  
-  // Construction de la forme compilée pour les murs et sols
+  // Réinitialisation des formes existantes
   laby0 = createShape();
+  ceiling0 = createShape();
+  ladder0 = null; // On recréera l'échelle si on trouve la sortie
+  
+  ceiling0.beginShape(QUADS);
+  
   laby0.beginShape(QUADS);
   laby0.texture(texture0);
   laby0.noStroke();
+
   
   for (int j = 0; j < labSize; j++) {
     for (int i = 0; i < labSize; i++) {
-      if (labyrinthe[j][i] == '#') {
+      if (labyrinthe[j][i] == '#'||labyrinthe[j][i] == 'X') {
         laby0.fill(i * 25, j * 25, 255 - i * 10 + j * 10);
         
         // Face supérieure du mur
-        if (j == 0 || labyrinthe[j - 1][i] == ' ') {
+        if (j == 0 || labyrinthe[j - 1][i] == ' ' || labyrinthe[j - 1][i] == 'X') {
           laby0.normal(0, -1, 0);
           for (int k = 0; k < 1; k++) {
             for (int l = -1; l < 1; l++) {
@@ -197,7 +212,7 @@ void buildShapes() {
         }
         
         // Face inférieure du mur
-        if (j == labSize - 1 || labyrinthe[j + 1][i] == ' ') {
+        if (j == labSize - 1 || labyrinthe[j + 1][i] == ' ' || labyrinthe[j + 1][i] == 'X') {
           laby0.normal(0, 1, 0);
           for (int k = 0; k < 1; k++) {
             for (int l = -1; l < 1; l++) {
@@ -214,7 +229,7 @@ void buildShapes() {
         }
         
         // Face gauche du mur
-        if (i == 0 || labyrinthe[j][i - 1] == ' ') {
+        if ((i == 0 || labyrinthe[j][i - 1] == ' ') && labyrinthe[j][i] != 'X') {
           laby0.normal(-1, 0, 0);
           for (int k = 0; k < 1; k++) {
             for (int l = -1; l < 1; l++) {
@@ -228,6 +243,19 @@ void buildShapes() {
                            (k + 0) * texture0.width, (0.5 + (l+0)/(2.0*1)) * texture0.height);
             }
           }
+        } else if (labyrinthe[j][i] == 'X') {
+          laby0.fill(192);
+          laby0.vertex(i * wallH - wallH/2, j * wallH - wallH/2, -wallH, 0, 0);
+          laby0.vertex(i * wallH + wallH/2, j * wallH - wallH/2, -wallH, 0, 1);
+          laby0.vertex(i * wallH + wallH/2, j * wallH + wallH/2, -wallH, 1, 1);
+          laby0.vertex(i * wallH - wallH/2, j * wallH + wallH/2, -wallH, 1, 0);
+          
+          // Dessus des murs pour le sol (plafond alternatif)
+          ceiling0.fill(32);
+          ceiling0.vertex(i * wallH - wallH/2, j * wallH - wallH/2, wallH);
+          ceiling0.vertex(i * wallH + wallH/2, j * wallH - wallH/2, wallH);
+          ceiling0.vertex(i * wallH + wallH/2, j * wallH + wallH/2, wallH);
+          ceiling0.vertex(i * wallH - wallH/2, j * wallH + wallH/2, wallH);
         }
         
         // Face droite du mur
@@ -247,12 +275,6 @@ void buildShapes() {
           }
         }
         
-        // Plafond vert (pour illustration) associé aux murs
-        ceiling1.fill(32, 255, 0);
-        ceiling1.vertex(i * wallH - wallH/2, j * wallH - wallH/2, wallH);
-        ceiling1.vertex(i * wallH + wallH/2, j * wallH - wallH/2, wallH);
-        ceiling1.vertex(i * wallH + wallH/2, j * wallH + wallH/2, wallH);
-        ceiling1.vertex(i * wallH - wallH/2, j * wallH + wallH/2, wallH);
       } else {
         // Sol
         laby0.fill(192);
@@ -268,13 +290,65 @@ void buildShapes() {
         ceiling0.vertex(i * wallH + wallH/2, j * wallH + wallH/2, wallH);
         ceiling0.vertex(i * wallH - wallH/2, j * wallH + wallH/2, wallH);
       }
+    
+      // On place l'échelle sur le mur de droite de la cellule marquée 'X'
+      if (labyrinthe[j][i] == 'X') {
+        // Pour la sortie, supposons que la cellule de sortie se trouve sur le mur est
+        // et que nous dessinons l'échelle sur ce mur.
+        // Calcul du mur de droite : x = i * wallH + wallH/2.
+        // La hauteur de l'échelle ira du niveau du sol (ici, on suppose -wallH) jusqu'au haut du mur (par exemple, 0).
+        ladder0 = createShape();
+        ladder0.beginShape(QUADS);
+        ladder0.fill(200, 150, 50); // Couleur de l'échelle (marron)
+        
+        float ladderWidth = wallH / 4;  // largeur de l'échelle
+        float ladderHeight = wallH;     // hauteur de l'échelle (peut être ajustée)
+        
+        // Position du centre de la cellule exit
+        float centerX = i * wallH;
+        float centerY = j * wallH;
+        // Position du mur est (droite) de la cellule
+        float wallX = centerX + wallH/2;
+        // On définit le sol et le plafond pour ce mur
+        float floorZ = -wallH;      // par exemple, le sol
+        float topZ = floorZ + ladderHeight;
+        
+        // Dessiner un quad vertical sur le mur (face orientée vers l'intérieur du labyrinthe)
+        // On centre l'échelle verticalement sur la cellule.
+        // Les quatre sommets du quad (dans l'ordre) :
+        //  - Bas gauche
+        //  - Bas droit
+        //  - Haut droit
+        //  - Haut gauche
+        float halfLadderWidth = ladderWidth / 2;
+        ladder0.vertex(wallX, centerY - halfLadderWidth, floorZ);
+        ladder0.vertex(wallX, centerY + halfLadderWidth, floorZ);
+        ladder0.vertex(wallX, centerY + halfLadderWidth, topZ);
+        ladder0.vertex(wallX, centerY - halfLadderWidth, topZ);
+        
+        ladder0.endShape();
+      }
     }
   }
   
   laby0.endShape();
   ceiling0.endShape();
-  ceiling1.endShape();
 }
+
+void updateDiscovery() {
+  int cellX = int(posX);
+  int cellY = int(posY);
+  
+  // révéler les cellules voisines
+  for (int j = cellY - 1; j <= cellY + 1; j++) {
+    for (int i = cellX - 1; i <= cellX + 1; i++) {
+      if (i >= 0 && i < labSize && j >= 0 && j < labSize) {
+        discovered[j][i] = true;
+      }
+    }
+  }
+}
+
 
 void showMinimap(){
   background(192);
@@ -289,25 +363,29 @@ void showMinimap(){
   // Affichage simple des murs sous forme de box
   for (int j = 0; j < labSize; j++) {
     for (int i = 0; i < labSize; i++) {
-      if (labyrinthe[j][i] == '#') {
+      if (labyrinthe[j][i] == '#' && discovered[j][i]) {
         fill(i * 25, j * 25, 255 - i * 10 + j * 10);
         pushMatrix();
-        translate(wallH + i * wallH/8, wallH + j * wallH/8, wallH);
-        box(wallH/10, wallH/10, 5);
+        translate(60 + i * 60/8, 60 + j *60/8, 60);
+        box(60/10, 60/10, 5);
         popMatrix();
-      }
+        }
     }
   }
+  pushMatrix();
+  fill(0, 255, 0);
+  noStroke();
+  translate(50+posX*60/8, 50+posY*60/8, 50);
+  sphere(3);
+  popMatrix();
 
 }
 
 boolean collides(float x, float y) {
-  // Conversion de la position du joueur en coordonnées monde
   float circleX = x * wallH;
   float circleY = y * wallH;
   float radiusWorld = playerRadius * wallH;
   
-  // On ne vérifie que les cellules autour de la position du joueur
   int minI = max(0, int(x) - 1);
   int maxI = min(labSize - 1, int(x) + 1);
   int minJ = max(0, int(y) - 1);
@@ -315,30 +393,27 @@ boolean collides(float x, float y) {
   
   for (int j = minJ; j <= maxJ; j++) {
     for (int i = minI; i <= maxI; i++) {
-      if (labyrinthe[j][i] == '#') {
-        // Coordonnées du rectangle (cellule du mur)
+      if (labyrinthe[j][i] == '#' || labyrinthe[j][i] == 'X' || (j == 0 && i == 1)) {
         float rectX = i * wallH - wallH/2;
         float rectY = j * wallH - wallH/2;
         float rectW = wallH;
         float rectH = wallH;
         
-        // Calcul du point le plus proche sur le rectangle
+        // Calcul du point le plus proche sur le rectangle de collision
         float nearestX = max(rectX, min(circleX, rectX + rectW));
         float nearestY = max(rectY, min(circleY, rectY + rectH));
         
-        // Distance entre le cercle (joueur) et ce point
         float deltaX = circleX - nearestX;
         float deltaY = circleY - nearestY;
         
         if ((deltaX * deltaX + deltaY * deltaY) < (radiusWorld * radiusWorld)) {
-          return true;  // Collision détectée
+          return true;
         }
       }
     }
   }
   return false;
 }
-
 
 
 void draw() {
@@ -368,49 +443,70 @@ void draw() {
     newX += sx;
     newY += sy;
   }
-
-
-
-  // Vérification de collision
-  if (!collides(newX, newY)) {
-    posX = newX;
-    posY = newY;
-  } else {
-    // Optionnel : gérer un glissement en vérifiant séparément l'axe X et Y
-    // Par exemple :
-    if (!collides(newX, posY)) posX = newX;
-    if (!collides(posX, newY)) posY = newY;
-  }
-
-  showMinimap();
   
-  // Configuration de la caméra en vue à la première personne
-  float camX = posX * wallH;
-  float camY = posY * wallH;
-  float camZ = -15;  // Hauteur ou profondeur fixe pour la caméra
-  // Calcul du point regardé en combinant heading et pitch
-  float lookX = camX + cos(heading) * cos(pitch);
-  float lookY = camY + sin(heading) * cos(pitch);
-  float lookZ = camZ + sin(pitch);
-  
-  perspective(PI/3, (float)width/height, 1, 1000);
-  camera(camX, camY, camZ, lookX, lookY, lookZ, 0, 0, -1);
-  lightFalloff(0.0, 0.01, 0.0001);
-  pointLight(255, 255, 255, posX*wallH, posY*wallH, 15);
-
-
-  noStroke();
-  // Affichage des formes compilées du labyrinthe
-  shape(laby0, 0, 0);
-  shape(ceiling0, 0, 0);
+  // pour débuguer et se déplacer librement dans le labyrinthe
+  //posX = newX;
+  //posY = newY;
+  if (scene == 1) {
+    // Vérification de collision
+    if (!collides(newX, newY)) {
+      posX = newX;
+      posY = newY;
+    } else {
+      // Gérer un glissement en vérifiant séparément l'axe X et Y
+      if (!collides(newX, posY)) posX = newX;
+      if (!collides(posX, newY)) posY = newY;
+    }
+    updateDiscovery();
+    showMinimap();
     
-  // Appel de l'affichage du débogage pour les collisions
-  //debug.drawPlayerCollision(posX, posY, wallH, playerRadius);
-  //debug.drawWallCollisions(labyrinthe, labSize, wallH);
-
-
-
-   
+    // Configuration de la caméra en vue à la première personne
+    float camX = posX * wallH;
+    float camY = posY * wallH;
+    float camZ = -15;  // Hauteur ou profondeur fixe pour la caméra
+    // Calcul du point regardé en combinant heading et pitch
+    float lookX = camX + cos(heading) * cos(pitch);
+    float lookY = camY + sin(heading) * cos(pitch);
+    float lookZ = camZ + sin(pitch);
+    
+    perspective(PI/3, (float)width/height, 1, 1000);
+    camera(camX, camY, camZ, lookX, lookY, lookZ, 0, 0, -1);
+    lightFalloff(0.0, 0.01, 0.0001);
+    pointLight(255, 255, 255, posX*wallH, posY*wallH, 15);
+  
+  
+    noStroke();
+    
+    int cellX = int(posX);
+    int cellY = int(posY);
+    
+    // Si la cellule correspond à la sortie (l'échelle) et qu'on n'est pas déjà en transition
+    if (labyrinthe[cellY][cellX] == 'X') {
+      nextLevel();
+    }
+    
+    // Affichage des formes compilées du labyrinthe
+    shape(laby0, 0, 0);
+    shape(ceiling0, 0, 0);
+  
+    
+    if (ladder0 != null) {
+      shape(ladder0, 0, 0);
+    }
+      
+    // Appel de l'affichage du débogage pour les collisions
+    debug.drawPlayerCollision(posX, posY, wallH, playerRadius);
+    debug.drawWallCollisions(labyrinthe, labSize, wallH);
+    
+    // Mise à jour et affichage de la momie
+    momie.update();
+    momie.display();
+    
+    }
+    else {
+      // Affichage de la pyramide
+      pyramide.display();
+    }
 }
 
 void keyPressed() {
