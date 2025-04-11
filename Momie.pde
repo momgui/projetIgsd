@@ -26,7 +26,7 @@ void update() {
   float newX = posX + cos(heading) * moveSpeed;
   float newY = posY + sin(heading) * moveSpeed;
   
-  if (!collides(newX, newY)) {
+  if (!collides(newX, newY,'m')) {
     posX = newX;
     posY = newY;
   } else {
@@ -39,7 +39,7 @@ void update() {
       float testHeading = heading - deltaAngle * i;
       newX = posX + cos(testHeading) * moveSpeed;
       newY = posY + sin(testHeading) * moveSpeed;
-      if (!collides(newX, newY)) {
+      if (!collides(newX, newY,'m')) {
          heading = testHeading;
          posX = newX;
          posY = newY;
@@ -50,7 +50,7 @@ void update() {
       testHeading = heading + deltaAngle * i;
       newX = posX + cos(testHeading) * moveSpeed;
       newY = posY + sin(testHeading) * moveSpeed;
-      if  (!collides(newX, newY)){
+      if  (!collides(newX, newY,'m')){
          heading = testHeading;
          posX = newX;
          posY = newY;

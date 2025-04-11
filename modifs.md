@@ -38,3 +38,14 @@ la détection des murs (pareil que pour le joueur)
 
 12 - amélioration du déplacement de la momie, elle se déplace maintenant aléatoirement en changeant de direction à chaque
 fois qu'elle touche un mur.
+
+13 - ajout d'un système de scène avec soit 0 hors de la pyramide et 1 dedans. En fonction de la scène on affiche soit le labyrinthe
+soit l'exterieur dans draw.
+
+14 - ajout d'une pyramide et d'un sol basique
+
+15 - ajout d'un ciel bleu et modification des lumières
+
+16 - ajout de la logique d'entrée sortie dans la pyramide
+
+17 - ajout de la condition de victoire et de l'écran de fin

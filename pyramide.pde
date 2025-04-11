@@ -1,394 +1,218 @@
 /**
  * Pyramide - Asset for projetIgsd
- * 
- * Classe permettant de créer une pyramide solide avec un sol de sable
- * Peut être utilisée comme asset dans le programme principal
+ * * Classe permettant de créer une pyramide solide avec un sol de sable.
+ * Modifiée pour être compatible avec un système de caméra où -Z est l'axe "haut".
  */
 
 class Pyramide {
   // Dimensions de la pyramide
-  float baseWidth;
-  float baseLength;
-  float height;
-  
+  float baseWidth;  // Dimension sur l'axe X
+  float baseLength; // Dimension sur l'axe Y
+  float height;     // Dimension sur l'axe Z (négatif car -Z est haut)
+
   // Dimensions du sol de sable
-  float sandBaseSize;
-  
-  // Position dans l'espace
-  PVector position;
-  
+  float sandBaseSize; // Taille du carré de sable (X et Y)
+
+  // Position dans l'espace (centre de la base)
+  PVector position; // Coordonnées du monde (x, y, z) où la base est centrée
+
   // Textures
   PImage textureStone;
   PImage textureSand;
   
-  // Constructeur
-  Pyramide(float x, float y, float z, float baseW, float baseL, float h, float sandSize) {
-    position = new PVector(x, y, z);
-    baseWidth = baseW;
-    baseLength = baseL;
-    height = h;
-    sandBaseSize = sandSize;
+  // Facteurs de répétition pour les textures
+  float stoneTileFactor;
+  float sandTileFactor;  // Répétition de la texture sable
+  int terrainResolution; // Nombre de subdivisions par côté
+  float noiseScale;      // Échelle du bruit pour la taille des collines
+  float heightAmplitude; // Hauteur max des collines
+  float[][] terrainHeights; // Stockage des hauteurs pré-calculées (relatives à position.z)
+
+  // Constructeur MODIFIÉ pour inclure les paramètres du terrain
+  Pyramide(float worldX, float worldY, float worldZ, // Position de la base
+           float baseW, float baseL, float h, // Dimensions Pyramide
+           float terrainSize, float stoneTiling, // Taille terrain, tiling pierre
+           // Nouveaux paramètres pour le terrain :
+           float sandTiling, int resolution, float nScale, float hAmplitude)
+  {
+    // worldX, worldY, worldZ: Coordonnées où placer le centre de la base de la pyramide
+    position = new PVector(worldX-2000, worldY+2000, worldZ-250); 
+    baseWidth = baseW*10;
+    baseLength = baseL*10;
+    height = h*10; // La hauteur sera appliquée sur l'axe Z négatif
+    sandBaseSize = terrainSize*10;
     
-    // Chargement des textures (à placer dans le dossier data)
+    
+    stoneTileFactor = stoneTiling;
+    sandTileFactor = sandTiling;
+    terrainResolution = resolution;
+    noiseScale = nScale;
+    heightAmplitude = hAmplitude;
+
+    loadTextures();
+
+    // Initialiser et générer les hauteurs du terrain
+    // Note: +1 car N subdivisions nécessitent N+1 vertices par côté
+    terrainHeights = new float[terrainResolution + 1][terrainResolution + 1];
+    generateTerrainHeights();
+    
+
+
+    // Stocker les facteurs de tiling
+    sandTileFactor = sandTiling;
+    stoneTileFactor = stoneTiling;
+
     loadTextures();
   }
-  
+
   // Chargement des textures
   void loadTextures() {
-    try {
-      textureStone = loadImage("stone_texture.jpg");
-      textureSand = loadImage("sand_texture.jpg");
-    } catch (Exception e) {
-      // Si les textures ne sont pas trouvées, utiliser des couleurs par défaut
-      println("Attention: Textures non trouvées. Utilisation des couleurs par défaut.");
-      textureStone = null;
-      textureSand = null;
-    }
+    textureStone = loadImage("stonesPyramide.tif");
+
+    textureSand = loadImage("sand.tif");
   }
   
+  
+  /**
+   * Génère les hauteurs du terrain en utilisant le bruit de Perlin
+   * et les stocke dans le tableau terrainHeights.
+   * Les hauteurs sont relatives au niveau Z de base (position.z).
+   */
+  void generateTerrainHeights() {
+    float halfSize = sandBaseSize / 2.0;
+    for (int i = 0; i <= terrainResolution; i++) {
+      for (int j = 0; j <= terrainResolution; j++) {
+        // Coordonnées X et Y du point actuel sur la grille dans le monde
+        // (centrées autour de 0, car on translat_era à position.x, position.y plus tard)
+        float x = map(i, 0, terrainResolution, -halfSize, halfSize);
+        float y = map(j, 0, terrainResolution, -halfSize, halfSize);
+
+        // Calculer la valeur de bruit de Perlin pour ce point
+        // On utilise les coordonnées monde * échelle pour que la taille des collines
+        // dépende de noiseScale et non de la résolution.
+        float noiseValue = noise(x * noiseScale, y * noiseScale);
+
+        // Mapper la valeur de bruit (0 à 1) à l'amplitude de hauteur désirée
+        float h = map(noiseValue, 0, 1, 0, heightAmplitude); // Hauteur relative
+
+        terrainHeights[i][j] = h;
+      }
+    }
+  }
+
+
   // Dessiner la pyramide et le sol de sable
   void display() {
     pushMatrix();
-    
-    // Positionnement dans l'espace
+
+    // Positionnement dans l'espace au centre de la base prévu
     translate(position.x, position.y, position.z);
-    
-    // Dessiner le sol de sable
+
+    // Dessiner le sol de sable (à la coordonnée Z de la position)
     drawSandBase();
-    
-    // Dessiner la pyramide
+
+    // Dessiner la pyramide (sa base sera à la coordonnée Z de la position)
     drawPyramide();
-    
+
     popMatrix();
   }
-  
+
   // Dessiner le sol de sable
   void drawSandBase() {
-    pushMatrix();
+
+    pushMatrix(); 
+    textureMode(NORMAL); 
+    textureWrap(REPEAT);
     
-    // Translation pour élever légèrement le sol au-dessus de 0
-    translate(0, 2, 0);
-    
-    beginShape(QUADS);
-    if (textureSand != null) {
-      texture(textureSand);
-      textureMode(NORMAL);
-    } else {
-      fill(245, 222, 179); // Couleur sable
-    }
-    
-    // Dessiner le carré du sol
-    float halfSize = sandBaseSize / 2;
-    
-    // Face supérieure du sol (avec texture)
-    if (textureSand != null) {
-      vertex(-halfSize, 0, -halfSize, 0, 0);
-      vertex(halfSize, 0, -halfSize, 1, 0);
-      vertex(halfSize, 0, halfSize, 1, 1);
-      vertex(-halfSize, 0, halfSize, 0, 1);
-    } else {
-      vertex(-halfSize, 0, -halfSize);
-      vertex(halfSize, 0, -halfSize);
-      vertex(halfSize, 0, halfSize);
-      vertex(-halfSize, 0, halfSize);
-    }
-    
-    endShape();
-    
-    // Effet de dunes de sable
-    drawSandDunes();
-    
-    popMatrix();
-  }
-  
-  // Dessiner des dunes de sable pour un effet plus réaliste
-  void drawSandDunes() {
-    float duneHeight = 5;
-    float duneSize = 50;
-    float halfSize = sandBaseSize / 2;
-    
-    pushMatrix();
-    
-    if (textureSand != null) {
-      fill(245, 222, 179, 200); // Semi-transparent
-    } else {
-      fill(245, 222, 179); // Couleur sable
-    }
-    
-    // Créer plusieurs petites dunes aléatoires
-    for (int i = 0; i < 15; i++) {
-      float x = random(-halfSize + 50, halfSize - 50);
-      float z = random(-halfSize + 50, halfSize - 50);
-      
-      // Éviter de placer des dunes sous la pyramide
-      if (abs(x) < baseWidth/2 && abs(z) < baseLength/2) continue;
-      
-      pushMatrix();
-      translate(x, 0, z);
-      
-      // Dessiner une dune
-      beginShape();
-      for (int angle = 0; angle < 360; angle += 10) {
-        float rad = radians(angle);
-        float xDune = cos(rad) * (duneSize/2);
-        float zDune = sin(rad) * (duneSize/2);
-        float yDune = duneHeight * (1 - abs(angle - 180) / 180.0);
-        vertex(xDune, -yDune, zDune);
+    noStroke();
+
+    float cellSize = sandBaseSize / terrainResolution;
+    float halfSize = sandBaseSize / 2.0;
+
+    // Itérer sur chaque cellule de la grille pour dessiner un QUAD
+    for (int i = 0; i < terrainResolution; i++) {
+      for (int j = 0; j < terrainResolution; j++) {
+
+        // Obtenir les hauteurs pré-calculées des 4 coins de la cellule
+        float h00 = terrainHeights[i][j];         // Hauteur au coin (i, j)
+        float h10 = terrainHeights[i+1][j];       // Hauteur au coin (i+1, j)
+        float h11 = terrainHeights[i+1][j+1];   // Hauteur au coin (i+1, j+1)
+        float h01 = terrainHeights[i][j+1];     // Hauteur au coin (i, j+1)
+
+        // Calculer les coordonnées X, Y locales des 4 coins
+        float x0 = -halfSize + i * cellSize;
+        float y0 = -halfSize + j * cellSize;
+        float x1 = x0 + cellSize;
+        float y1 = y0 + cellSize;
+
+        // Calculer les coordonnées de texture (U, V) pour les 4 coins, en appliquant le tiling
+        float u0 = map(i,   0, terrainResolution, 0, sandTileFactor);
+        float v0 = map(j,   0, terrainResolution, 0, sandTileFactor);
+        float u1 = map(i+1, 0, terrainResolution, 0, sandTileFactor);
+        float v1 = map(j+1, 0, terrainResolution, 0, sandTileFactor);
+
+        // Dessiner le QUAD pour cette cellule de terrain
+        // L'ordre des sommets est anti-horaire vu de -Z (haut) pour des normales correctes
+        beginShape(QUADS);
+        texture(textureSand);
+        // Coin (i, j) - inférieur gauche local
+        vertex(x0, y0, h00, u0, v0);
+        // Coin (i+1, j) - inférieur droit local
+        vertex(x1, y0, h10, u1, v0);
+         // Coin (i+1, j+1) - supérieur droit local
+        vertex(x1, y1, h11, u1, v1);
+        // Coin (i, j+1) - supérieur gauche local
+        vertex(x0, y1, h01, u0, v1);
+        endShape();
       }
-      endShape(CLOSE);
-      popMatrix();
     }
-    
-    popMatrix();
+
+    popMatrix(); // Restaurer le style/transformations
   }
-  
+
+
   // Dessiner la pyramide
   void drawPyramide() {
     float halfWidth = baseWidth / 2;
     float halfLength = baseLength / 2;
-    
+    float peakZ = -height;
+
     pushMatrix();
-    
-    // Si la texture existe, l'utiliser, sinon utiliser une couleur
-    if (textureStone != null) {
-      textureMode(NORMAL);
-    } else {
-      fill(210, 180, 140); // Couleur pierre
-    }
-    
-    // Dessiner la base de la pyramide (face inférieure)
-    beginShape(QUADS);
-    if (textureStone != null) {
-      texture(textureStone);
-    }
-    
-    // Face inférieure (base)
-    if (textureStone != null) {
-      vertex(-halfWidth, 0, -halfLength, 0, 0);
-      vertex(halfWidth, 0, -halfLength, 1, 0);
-      vertex(halfWidth, 0, halfLength, 1, 1);
-      vertex(-halfWidth, 0, halfLength, 0, 1);
-    } else {
-      vertex(-halfWidth, 0, -halfLength);
-      vertex(halfWidth, 0, -halfLength);
-      vertex(halfWidth, 0, halfLength);
-      vertex(-halfWidth, 0, halfLength);
-    }
-    endShape();
-    
-    // Dessiner les faces de la pyramide
+    textureMode(NORMAL);
+    textureWrap(REPEAT);
+
+
+    // --- Faces latérales (triangles) ---
     beginShape(TRIANGLES);
-    if (textureStone != null) {
-      texture(textureStone);
-    } else {
-      fill(210, 180, 140); // Couleur pierre
-    }
-    
-    // Face avant
-    if (textureStone != null) {
-      vertex(-halfWidth, 0, halfLength, 0, 1);
-      vertex(halfWidth, 0, halfLength, 1, 1);
-      vertex(0, -height, 0, 0.5, 0);
-    } else {
-      vertex(-halfWidth, 0, halfLength);
-      vertex(halfWidth, 0, halfLength);
-      vertex(0, -height, 0);
-    }
-    
-    // Face droite
-    if (textureStone != null) {
-      vertex(halfWidth, 0, halfLength, 0, 1);
-      vertex(halfWidth, 0, -halfLength, 1, 1);
-      vertex(0, -height, 0, 0.5, 0);
-    } else {
-      vertex(halfWidth, 0, halfLength);
-      vertex(halfWidth, 0, -halfLength);
-      vertex(0, -height, 0);
-    }
-    
-    // Face arrière
-    if (textureStone != null) {
-      vertex(halfWidth, 0, -halfLength, 0, 1);
-      vertex(-halfWidth, 0, -halfLength, 1, 1);
-      vertex(0, -height, 0, 0.5, 0);
-    } else {
-      vertex(halfWidth, 0, -halfLength);
-      vertex(-halfWidth, 0, -halfLength);
-      vertex(0, -height, 0);
-    }
-    
-    // Face gauche
-    if (textureStone != null) {
-      vertex(-halfWidth, 0, -halfLength, 0, 1);
-      vertex(-halfWidth, 0, halfLength, 1, 1);
-      vertex(0, -height, 0, 0.5, 0);
-    } else {
-      vertex(-halfWidth, 0, -halfLength);
-      vertex(-halfWidth, 0, halfLength);
-      vertex(0, -height, 0);
-    }
-    
+    texture(textureStone);
+
+    float uFactor = stoneTileFactor*10;
+    float vFactor = stoneTileFactor*10;
+
+    // Face 1 (Y positif)
+    vertex(-halfWidth,  halfLength, 0, 0 * uFactor    , 1 * vFactor); // Base Supérieur gauche
+    vertex( halfWidth,  halfLength, 0, 1 * uFactor    , 1 * vFactor); // Base Supérieur droit
+    vertex(         0,           0, -peakZ, 0.5 * uFactor  , 0 * vFactor); // Sommet
+
+    // Face 2 (X positif)
+    vertex( halfWidth,  halfLength, 0, 0 * uFactor    , 1 * vFactor);
+    vertex( halfWidth, -halfLength, 0, 1 * uFactor    , 1 * vFactor);
+    vertex(         0,           0, -peakZ, 0.5 * uFactor  , 0 * vFactor);
+
+    // Face 3 (Y négatif)
+    vertex( halfWidth, -halfLength, 0, 0 * uFactor    , 1 * vFactor);
+    vertex(-halfWidth, -halfLength, 0, 1 * uFactor    , 1 * vFactor);
+    vertex(         0,           0, -peakZ, 0.5 * uFactor  , 0 * vFactor);
+
+    // Face 4 (X négatif)
+    vertex(-halfWidth, -halfLength, 0, 0 * uFactor    , 1 * vFactor);
+    vertex(-halfWidth,  halfLength, 0, 1 * uFactor    , 1 * vFactor);
+    vertex(         0,           0, -peakZ, 0.5 * uFactor  , 0 * vFactor);
+
     endShape();
-    
-    // Ajouter quelques détails à la pyramide (entrée, etc.)
-    addDetails();
-    
     popMatrix();
-  }
-  
-  // Ajouter des détails à la pyramide
-  void addDetails() {
-    float halfWidth = baseWidth / 2;
-    float detailSize = baseWidth / 10;
-    
-    // Dessiner une entrée sur la face avant
-    pushMatrix();
-    translate(0, -detailSize, halfWidth);
-    
-    // Utiliser une couleur plus sombre pour l'entrée
-    fill(30, 30, 30);
-    
-    // Entrée de la pyramide
-    box(detailSize * 2, detailSize * 2, detailSize);
-    
-    popMatrix();
-    
-    // Ajouter quelques blocs autour de la pyramide
-    pushMatrix();
-    if (textureStone != null) {
-      noStroke();
-    } else {
-      fill(190, 160, 120);
-    }
-    
-    // Quelques blocs éparpillés
-    for (int i = 0; i < 8; i++) {
-      float angle = random(TWO_PI);
-      float dist = random(baseWidth * 0.6, sandBaseSize * 0.4);
-      float blockSize = random(10, 25);
-      float x = cos(angle) * dist;
-      float z = sin(angle) * dist;
-      
-      pushMatrix();
-      translate(x, -blockSize/2, z);
-      box(blockSize);
-      popMatrix();
-    }
-    
-    popMatrix();
-  }
-  
-  // Méthode pour mettre à jour la position
-  void setPosition(float x, float y, float z) {
-    position.set(x, y, z);
-  }
-  
-  // Méthode pour définir les dimensions
-  void setDimensions(float baseW, float baseL, float h) {
-    baseWidth = baseW;
-    baseLength = baseL;
-    height = h;
-  }
-  
-  // Méthode pour définir la taille du sol de sable
-  void setSandBaseSize(float size) {
-    sandBaseSize = size;
-  }
-}
 
-// Fonction exemple pour afficher la pyramide (pourra être importée dans main)
-void setupPyramide() {
-  // Créer les répertoires nécessaires si ce n'est pas déjà fait
-  File dataFolder = new File(sketchPath("data"));
-  if (!dataFolder.exists()) {
-    dataFolder.mkdir();
   }
-  
-  // Définir les dimensions d'une pyramide
-  float baseWidth = 200;
-  float baseLength = 200;
-  float height = 150;
-  float sandSize = 500;
-  
-  // Créer une instance de pyramide
-  Pyramide maPyramide = new Pyramide(0, 0, 0, baseWidth, baseLength, height, sandSize);
-  
-  // Créer des textures de base si elles n'existent pas
-  createDefaultTextures();
-  
 
-}
-
-// Fonction utilitaire pour créer des textures par défaut
-void createDefaultTextures() {
-  // Vérifier si les textures existent déjà
-  File stoneTexture = new File(sketchPath("data/stone_texture.jpg"));
-  File sandTexture = new File(sketchPath("data/sand_texture.jpg"));
   
-  // Si les textures n'existent pas, créer des textures simples
-  if (!stoneTexture.exists()) {
-    PGraphics pg = createGraphics(512, 512);
-    pg.beginDraw();
-    pg.background(210, 180, 140);
-    
-    // Créer une texture de pierre
-    for (int i = 0; i < 500; i++) {
-      float x = random(pg.width);
-      float y = random(pg.height);
-      float s = random(5, 20);
-      pg.noStroke();
-      pg.fill(random(180, 200), random(150, 170), random(120, 140), random(100, 255));
-      pg.ellipse(x, y, s, s);
-    }
-    
-    // Ajouter des motifs de lignes pour imiter les jointures de pierre
-    for (int i = 0; i < 20; i++) {
-      pg.stroke(150, 130, 100, 150);
-      pg.strokeWeight(random(1, 3));
-      float y = random(pg.height);
-      pg.line(0, y, pg.width, y + random(-50, 50));
-    }
-    
-    for (int i = 0; i < 20; i++) {
-      pg.stroke(150, 130, 100, 150);
-      pg.strokeWeight(random(1, 3));
-      float x = random(pg.width);
-      pg.line(x, 0, x + random(-50, 50), pg.height);
-    }
-    
-    pg.endDraw();
-    pg.save(sketchPath("data/stone_texture.jpg"));
-  }
-  
-  // Créer une texture de sable
-  if (!sandTexture.exists()) {
-    PGraphics pg = createGraphics(512, 512);
-    pg.beginDraw();
-    pg.background(245, 222, 179);
-    
-    // Ajouter du bruit pour imiter le sable
-    for (int i = 0; i < 5000; i++) {
-      pg.noStroke();
-      pg.fill(random(235, 255), random(212, 232), random(169, 189), random(50, 150));
-      float x = random(pg.width);
-      float y = random(pg.height);
-      pg.ellipse(x, y, random(1, 3), random(1, 3));
-    }
-    
-    // Ajouter de légères ondulations
-    for (int i = 0; i < 30; i++) {
-      pg.stroke(230, 210, 170, 100);
-      pg.strokeWeight(1);
-      float y = random(pg.height);
-      pg.noFill();
-      pg.beginShape();
-      for (int x = 0; x < pg.width; x += 5) {
-        pg.curveVertex(x, y + sin(x * 0.05) * random(5, 15));
-      }
-      pg.endShape();
-    }
-    
-    pg.endDraw();
-    pg.save(sketchPath("data/sand_texture.jpg"));
-  }
 }
