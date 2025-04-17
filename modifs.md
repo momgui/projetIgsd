@@ -48,4 +48,18 @@ soit l'exterieur dans draw.
 
 16 - ajout de la logique d'entrée sortie dans la pyramide
 
-17 - ajout de la condition de victoire et de l'écran de fin
+17 - ajout de la condition de victoire et de l'écran de fin  
+
+18 - création du corps de la momie et ajout dans le jeu.
+
+19 - création d'un shader pour l'exterieur
+
+20 - création d'un shader pour l'intérieur
+
+21 - modification de la minimap pour qu'elle soit réinitialisée à chaque étage
+
+22 - création d'une échelle en 3D
+
+23 - ajout d'une animation quand on monte
+
+24 - ajout de la momie à tous les niveaux avec un placement aléatoire valide

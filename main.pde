@@ -1,13 +1,20 @@
 import java.awt.Robot;
 import java.awt.AWTException;
-
-
+boolean isClimbing = false; // Indique si le joueur est en train de monter à l'échelle
+float climbSpeed = 0.2;    // Vitesse de montée de l'échelle
+float climbTargetZ = 15;  
+float camZ = -15;  // Hauteur ou profondeur fixe pour la caméra
+boolean isPlayerDead = false;     // Indicateur si le joueur est mort
+int deathTimestamp = 0;         // Moment où le joueur est mort (en millisecondes)
+final int DEATH_MESSAGE_DURATION = 3000; // Durée d'affichage du message (3 secondes)
 
 Robot robot;
 boolean isWarping = false;
 
 int scene = 1; // 0 : Désert, 1 : Pyramide/Labyrinthe, 1: écran de victoire,2: ecran de défaite
 int etage = 0;
+
+
 
 boolean[][] discovered;
 float playerRadius = 0.3;
@@ -57,6 +64,15 @@ float repetitionPierre = 5.0;
 float repetitionSable = 40.0; // Peut-être augmenter le tiling pour le grand terrain //<>//
 
 Momie momie;
+PShader desertEffect;
+
+PShader horrorMazeShader;
+// Variables pour contrôler l'intensité des effets
+float pulseSpeed = 0.5;      // Vitesse de pulsation de l'éclairage
+float flickerIntensity = 0.2;
+
+
+Ladder3D ladder3D;
 
 void setup() {
   pixelDensity(2);
@@ -90,7 +106,6 @@ void setup() {
 
   // Génération du labyrinthe
   generateLabyrinth(level);
-
   // Calcul préliminaire des dimensions des murs
   wallH = (float) height / labSize;
 
@@ -108,8 +123,12 @@ void setup() {
   }
   discovered[int(posY)][int(posX)] = true;
 
-  momie = new Momie(19.0, 18.0);
-  
+  momie = new Momie(1.0, 1.0);
+
+
+  // Charger le shader post-traitement
+  desertEffect = loadShader("desertEffect.glsl");
+  horrorMazeShader = loadShader("horrorMaze.glsl");
 }
 
 
@@ -181,9 +200,9 @@ void generateLabyrinth(int level) {
 
 
 void nextLevel() {
-  etage+=1;
+  etage += 1;
   if (etage == 4) {
-    scene = 2;
+      scene = 2;
   }
   labSize -= 4;
   posX = 1;
@@ -191,12 +210,37 @@ void nextLevel() {
   labyrinthe = new char[labSize][labSize];
   sides = new char[labSize][labSize][4];
   level++;
-  generateLabyrinth(level);
-
+  
   // Mise à jour des dimensions et reconstruction des formes
-  wallH = (float) width / labSize;
+  wallH = (float) height / labSize;
+  
+  generateLabyrinth(level);
+  // Reconstruire les formes avec la texture
   buildShapes();
+
+  // Placement aléatoire de la momie pour ce nouvel étage
+  float randomX, randomY;
+  boolean positionValide = false;
+
+  while (!positionValide) {
+    randomX = floor(random(1, labSize - 1)); // Centre de la case
+    randomY = floor(random(1, labSize - 1));
+
+    if (!collides(randomX, randomY, 'm')) {
+      momie.posX = randomX;
+      momie.posY = randomY;
+      positionValide = true;
+    }
+  }
+
+  for (int j = 0; j < labSize; j++) {
+    for (int i = 0; i < labSize; i++) {
+      discovered[j][i] = false;
+    }
+  }
+  discovered[int(posY)][int(posX)] = true;
 }
+
 
 
 
@@ -205,7 +249,7 @@ void buildShapes() {
   // Réinitialisation des formes existantes
   laby0 = createShape();
   ceiling0 = createShape();
-  ladder0 = null; // On recréera l'échelle si on trouve la sortie
+  ladder0 = createShape();
 
   ceiling0.beginShape(QUADS);
 
@@ -317,40 +361,29 @@ void buildShapes() {
 
       // On place l'échelle sur le mur de droite de la cellule marquée 'X'
       if (labyrinthe[j][i] == 'X') {
-        // Pour la sortie, supposons que la cellule de sortie se trouve sur le mur est
-        // et que nous dessinons l'échelle sur ce mur.
-        // Calcul du mur de droite : x = i * wallH + wallH/2.
-        // La hauteur de l'échelle ira du niveau du sol (ici, on suppose -wallH) jusqu'au haut du mur (par exemple, 0).
-        ladder0 = createShape();
-        ladder0.beginShape(QUADS);
-        ladder0.fill(200, 150, 50); // Couleur de l'échelle (marron)
 
-        float ladderWidth = wallH / 4;  // largeur de l'échelle
-        float ladderHeight = wallH;     // hauteur de l'échelle (peut être ajustée)
 
-        // Position du centre de la cellule exit
         float centerX = i * wallH;
         float centerY = j * wallH;
-        // Position du mur est (droite) de la cellule
-        float wallX = centerX + wallH/2;
-        // On définit le sol et le plafond pour ce mur
-        float floorZ = -wallH;      // par exemple, le sol
-        float topZ = floorZ + ladderHeight;
-
-        // Dessiner un quad vertical sur le mur (face orientée vers l'intérieur du labyrinthe)
-        // On centre l'échelle verticalement sur la cellule.
-        // Les quatre sommets du quad (dans l'ordre) :
-        //  - Bas gauche
-        //  - Bas droit
-        //  - Haut droit
-        //  - Haut gauche
-        float halfLadderWidth = ladderWidth / 2;
-        ladder0.vertex(wallX, centerY - halfLadderWidth, floorZ);
-        ladder0.vertex(wallX, centerY + halfLadderWidth, floorZ);
-        ladder0.vertex(wallX, centerY + halfLadderWidth, topZ);
-        ladder0.vertex(wallX, centerY - halfLadderWidth, topZ);
-
-        ladder0.endShape();
+        float wallX = centerX + wallH/2;  // Position du mur est
+        
+        // Dimensions de l'échelle
+        float ladderWidth = wallH * 0.6;  // 60% de la largeur du mur
+        float ladderHeight = wallH * 1.5; // 150% de la hauteur du mur
+        float ladderDepth = wallH * 0.05; // 5% de l'épaisseur du mur
+        int numRungs = 5;                 // Nombre de barreaux
+        
+        // Créer l'échelle
+        ladder3D = new Ladder3D(
+          wallX - ladderDepth/2,  // Positionner contre le mur
+          centerY,                // Centrer sur la cellule
+          -wallH + ladderHeight/2,// Base de l'échelle au niveau du sol
+          ladderWidth,
+          ladderHeight,
+          ladderDepth,
+          numRungs
+        );
+        
       }
     }
   }
@@ -379,8 +412,7 @@ void showMinimap() {
   sphereDetail(6);
   // Caméra et perspective standard
   perspective();
-  camera(width/2.0, height/2.0, (height/2.0)/tan(PI*30.0/180.0),
-    width/2.0, height/2.0, 0, 0, 1, 0);
+  camera(width/2.0, height/2.0, (height/2.0)/tan(PI*30.0/180.0), width/2.0, height/2.0, 0, 0, 1, 0);
   noLights();
   stroke(0);
 
@@ -439,7 +471,16 @@ boolean collides(float x, float y, char obj) {
 }
 
 
+void triggerPlayerDeath() {
+  if (!isPlayerDead) {
+    isPlayerDead = true;
+    deathTimestamp = millis(); // Enregistre le moment de la mort
+    scene = 0;
+  }
+}
+
 void draw() {
+
   // Calcul des vecteurs de déplacement en fonction de l'angle horizontal
   float dx = cos(heading) * moveSpeed;
   float dy = sin(heading) * moveSpeed;
@@ -476,7 +517,6 @@ void draw() {
   // Configuration de la caméra en vue à la première personne
   float camX = posX * wallH;
   float camY = posY * wallH;
-  float camZ = -15;  // Hauteur ou profondeur fixe pour la caméra
   // Calcul du point regardé en combinant heading et pitch
   float lookX = camX + cos(heading) * cos(pitch);
   float lookY = camY + sin(heading) * cos(pitch);
@@ -487,6 +527,7 @@ void draw() {
   
 
   if (scene == 0) {
+
     // test pour l'entrée dans la pyramide
     if (newX+2000 < 2000 && newY+2000 > 2000) {
       scene = 1;
@@ -534,48 +575,81 @@ void draw() {
   
   
     pyramide.display();
+    desertEffect.set("time", millis() / 1000.0); 
     
+    // Appliquer le shader sur toute la scène
+    filter(desertEffect);
+
   }
   
   if (scene == 1) {
+       // --- Vérification de la collision Joueur-Momie ---
+    if (!isPlayerDead) { // Ne vérifie que si le joueur n'est pas déjà mort
+        float distanceSq = sq(posX - momie.posX) + sq(posY - momie.posY);
+        float momieRadius = 0.3;
+        float collisionRadiusSum = playerRadius + momieRadius;
+        if (distanceSq < sq(collisionRadiusSum)) {
+            triggerPlayerDeath();
+        }
+    }
+
+    
     if (newX < 1.5 && newY < 0.5) {
       scene = 0;
     }
     
     // Vérification de collision
-    if (!collides(newX, newY,'j')) {
-      posX = newX;
-      posY = newY;
-    } else {
-      // Gérer un glissement en vérifiant séparément l'axe X et Y
-      if (!collides(newX, posY,'j')) posX = newX;
-      if (!collides(posX, newY,'j')) posY = newY;
+    if (!isClimbing) {
+      if (!collides(newX, newY,'j')) {
+        posX = newX;
+        posY = newY;
+      } else {
+        // Gérer un glissement en vérifiant séparément l'axe X et Y
+        if (!collides(newX, posY,'j')) posX = newX;
+        if (!collides(posX, newY,'j')) posY = newY;
+      }
     }
-
     
     
-    lightFalloff(0.0, 0.01, 0.0001);
+    noLights();
     pointLight(255, 255, 255, posX*wallH, posY*wallH, 15);
-
   
     noStroke();
   
     int cellX = int(posX);
     int cellY = int(posY);
-  
-      // Si la cellule correspond à la sortie (l'échelle) et qu'on n'est pas déjà en transition
-      if (labyrinthe[cellY][cellX] == 'X') {
+    
+    if (labyrinthe[cellY][cellX] == 'X' && !isClimbing) {
+      isClimbing = true;
+    }
+
+    // Animation de montée de l'échelle
+    if (isClimbing) {
+      camZ += climbSpeed; // Augmente la position Z de la caméra pour simuler la montée
+      if (camZ >= climbTargetZ) { // Vérifie si l'animation est terminée
+        isClimbing = false;
         nextLevel();
+        // Réinitialiser la position Z de la caméra à sa valeur par défaut après la montée
+        camZ = -15;
+        for (int j = 0; j < labSize; j++) {
+          for (int i = 0; i < labSize; i++) {
+            discovered[j][i] = false;
+          }
+        }
+        discovered[int(posY)][int(posX)] = true;
       }
+    }
+
+  
   
       // Affichage des formes compilées du labyrinthe
       shape(laby0, 0, 0);
       shape(ceiling0, 0, 0);
   
   
-      if (ladder0 != null) {
-        shape(ladder0, 0, 0);
-      }
+
+      ladder3D.display();
+
   
       // Appel de l'affichage du débogage pour les collisions
       //debug.drawPlayerCollision(posX, posY, wallH, playerRadius);
@@ -584,43 +658,81 @@ void draw() {
       // Mise à jour et affichage de la momie
       momie.update();
       momie.display();
+      
+      
+      
+      horrorMazeShader.set("time", millis() / 1000.0);
+      horrorMazeShader.set("pulseSpeed", pulseSpeed);
+      horrorMazeShader.set("flickerIntensity", flickerIntensity);
+      
+      // Appliquer le shader
+      filter(horrorMazeShader);
     }
+  if (isPlayerDead) {
+    // Vérifier si le délai d'affichage est toujours en cours
+    if (millis() < deathTimestamp + DEATH_MESSAGE_DURATION) {
+  
+      // --- Configuration pour dessin 2D par-dessus la 3D ---
+      pushMatrix(); // Sauvegarde la matrice de transformation actuelle
+      pushStyle();  // Sauvegarde les styles actuels (couleur, taille texte, etc.)
+  
+      hint(DISABLE_DEPTH_TEST); // Permet de dessiner en 2D sans se soucier de la profondeur 3D
+      camera(); // Réinitialise la caméra en mode 2D par défaut
+      ortho();  // Utilise une projection orthographique (standard pour 2D)
+  
+      // --- Dessiner le texte ---
+      textSize(80);              // Taille du texte 
+      fill(200, 0, 0, 220);      // Couleur rouge semi-transparente
+      textAlign(CENTER, CENTER); // Centrer le texte horizontalement et verticalement
+      text("YOU DIED", width / 2, height / 2); // Afficher au centre
+  
+      // --- Restaurer l'état précédent ---
+      hint(ENABLE_DEPTH_TEST); // Réactive le test de profondeur pour le prochain cycle de dessin 3D
+      popStyle(); // Restaure les styles
+      popMatrix(); // Restaure la matrice de transformation
+  
+      // !! Important: Rétablir la perspective pour le prochain frame 3D !!
+      // Sinon la caméra restera en mode 2D/ortho
+      perspective(PI/3, (float)width/height, 1, (scene == 0 ? 10000 : 1000));
+      // La caméra 3D sera recalculée au début du prochain draw() de toute façon
+  
+    } 
+  }
 }
 
 void keyPressed() {
   // Utilisation des touches WASD pour le déplacement
-  if (key == 'z' || key == 'Z') {
-    moveForward = true;
-  }
-  if (key == 's' || key == 'S') {
-    moveBackward = true;
-  }
-  if (key == 'q' || key == 'Q') {
-    moveLeft = true;
-  }
-  if (key == 'd' || key == 'D') {
-    moveRight = true;
-  }
-
-  // Par exemple, si vous souhaitez quitter avec la touche Échap
-  if (keyCode == ESC) {
-    exit();
-  }
+    if (key == 'z' || key == 'Z') {
+      moveForward = true;
+    }
+    if (key == 's' || key == 'S') {
+      moveBackward = true;
+    }
+    if (key == 'q' || key == 'Q') {
+      moveLeft = true;
+    }
+    if (key == 'd' || key == 'D') {
+      moveRight = true;
+    }
+  
+    if (keyCode == ESC) {
+      exit();
+    }
 }
 
 void keyReleased() {
-  if (key == 'z' || key == 'Z') {
-    moveForward = false;
-  }
-  if (key == 's' || key == 'S') {
-    moveBackward = false;
-  }
-  if (key == 'q' || key == 'Q') {
-    moveLeft = false;
-  }
-  if (key == 'd' || key == 'D') {
-    moveRight = false;
-  }
+    if (key == 'z' || key == 'Z') {
+      moveForward = false;
+    }
+    if (key == 's' || key == 'S') {
+      moveBackward = false;
+    }
+    if (key == 'q' || key == 'Q') {
+      moveLeft = false;
+    }
+    if (key == 'd' || key == 'D') {
+      moveRight = false;
+    }
 }
 
 void mouseMoved() {

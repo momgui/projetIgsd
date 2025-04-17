@@ -1,9 +1,3 @@
-/**
- * Pyramide - Asset for projetIgsd
- * * Classe permettant de créer une pyramide solide avec un sol de sable.
- * Modifiée pour être compatible avec un système de caméra où -Z est l'axe "haut".
- */
-
 class Pyramide {
   // Dimensions de la pyramide
   float baseWidth;  // Dimension sur l'axe X
