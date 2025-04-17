@@ -109,6 +109,8 @@ class Pyramide {
     drawPyramide();
 
     popMatrix();
+    textureMode(IMAGE);         // remets le mode UV en pixels
+    textureWrap(CLAMP);  
   }
 
   // Dessiner le sol de sable

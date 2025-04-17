@@ -1,8 +1,8 @@
-import java.awt.Robot;
+import java.awt.Robot; //<>//
 import java.awt.AWTException;
 boolean isClimbing = false; // Indique si le joueur est en train de monter à l'échelle
 float climbSpeed = 0.2;    // Vitesse de montée de l'échelle
-float climbTargetZ = 15;  
+float climbTargetZ = 15;
 float camZ = -15;  // Hauteur ou profondeur fixe pour la caméra
 boolean isPlayerDead = false;     // Indicateur si le joueur est mort
 int deathTimestamp = 0;         // Moment où le joueur est mort (en millisecondes)
@@ -10,11 +10,26 @@ final int DEATH_MESSAGE_DURATION = 3000; // Durée d'affichage du message (3 sec
 
 Robot robot;
 boolean isWarping = false;
+import processing.sound.*;
 
-int scene = 1; // 0 : Désert, 1 : Pyramide/Labyrinthe, 1: écran de victoire,2: ecran de défaite
+SoundFile bgOutside;   // musique extérieure
+SoundFile bgInside;    // musique intérieure
+SoundFile sfxCatch;    // son quand on se fait attraper
+SoundFile sfxClimb;    // son quand on monte à l’échelle
+
+int scene = 1;         // 0 = dehors, 1 = dedans
+
 int etage = 0;
 
+final int NB_STEPS = 5;          // nombre de variations par surface
+SoundFile[] stepSand  = new SoundFile[NB_STEPS];
+SoundFile[] stepStone = new SoundFile[NB_STEPS];
 
+// pour suivre le déplacement du joueur
+
+float prevX, prevY;                   // position précédente
+float distAccum = 0;             // distance cumulée depuis le dernier son
+float stepDist  = 2;            // joue un son tous les 40 pixels environ
 
 boolean[][] discovered;
 float playerRadius = 0.3;
@@ -24,7 +39,7 @@ Debug debug;
 int dirX = 0, dirY = 1;
 
 // Variables de position et de direction
-float posX = 19.0, posY = 18.0;  // Position initiale dans la grille du labyrinthe
+float posX = 1.0, posY = 1.0;  // Position initiale dans la grille du labyrinthe
 
 // Pyramide comme asset
 Pyramide pyramide;
@@ -43,8 +58,10 @@ char sides[][][];
 int level = 0;
 
 // Formes et texture
-PShape laby0, ceiling0, ladder0;
-PImage texture0;
+PShape ceiling0, ladder0;
+PShape murs;
+PImage textureMur;
+
 
 // Dimensions pré-calculées
 float wallH;
@@ -61,7 +78,7 @@ float largeurPyramide = 400;
 float longueurPyramide = 400;
 float hauteurPyramide = 250;
 float repetitionPierre = 5.0;
-float repetitionSable = 40.0; // Peut-être augmenter le tiling pour le grand terrain //<>//
+float repetitionSable = 40.0; // Peut-être augmenter le tiling pour le grand terrain
 
 Momie momie;
 PShader desertEffect;
@@ -77,14 +94,14 @@ Ladder3D ladder3D;
 void setup() {
   pixelDensity(2);
   randomSeed(2);
-  texture0 = loadImage("stones.tif");
+  textureMur = loadImage("stones.tif");
   fullScreen(P3D);  // Mode plein écran en 3D
 
   // Création de la pyramide (position, dimensions)
   pyramide = new Pyramide(0, 0, 0, // Position base (x, y, z)
-                          largeurPyramide, longueurPyramide, hauteurPyramide, // Dim pyramide
-                          tailleTerrain, repetitionPierre, // Taille terrain, tiling pierre
-                          repetitionSable, resolutionTerrain, echelleBruit, amplitudeHauteur); // Tiling sable & Params terrain}
+    largeurPyramide, longueurPyramide, hauteurPyramide, // Dim pyramide
+    tailleTerrain, repetitionPierre, // Taille terrain, tiling pierre
+    repetitionSable, resolutionTerrain, echelleBruit, amplitudeHauteur); // Tiling sable & Params terrain}
 
   // Initialisation des tableaux
   labyrinthe = new char[labSize][labSize];
@@ -123,12 +140,31 @@ void setup() {
   }
   discovered[int(posY)][int(posX)] = true;
 
-  momie = new Momie(1.0, 1.0);
+  momie = new Momie(190.0, 18.0);
 
 
   // Charger le shader post-traitement
   desertEffect = loadShader("desertEffect.glsl");
   horrorMazeShader = loadShader("horrorMaze.glsl");
+
+  // initialisation des sons
+  bgOutside = new SoundFile(this, "data/exterieur.wav");
+  bgInside  = new SoundFile(this, "data/interieur.wav");
+  sfxCatch  = new SoundFile(this, "data/capture.wav");
+  sfxClimb  = new SoundFile(this, "data/echelle.wav");
+
+  bgInside.amp(0.001);
+  // lance l’ambiance extérieure par défaut
+  bgOutside.loop();
+
+  for (int i = 0; i < NB_STEPS; i++) {
+    stepSand[i]  = new SoundFile(this, "stepSand"  + i + ".wav");
+    stepStone[i] = new SoundFile(this, "stepStone" + i + ".wav");
+    stepSand[i].amp(0.6);            // volume +/- adapté
+    stepStone[i].amp(0.6);
+  }
+  prevX = posX;
+  prevY = posY;
 }
 
 
@@ -202,7 +238,7 @@ void generateLabyrinth(int level) {
 void nextLevel() {
   etage += 1;
   if (etage == 4) {
-      scene = 2;
+    scene = 2;
   }
   labSize -= 4;
   posX = 1;
@@ -210,10 +246,10 @@ void nextLevel() {
   labyrinthe = new char[labSize][labSize];
   sides = new char[labSize][labSize][4];
   level++;
-  
+
   // Mise à jour des dimensions et reconstruction des formes
   wallH = (float) height / labSize;
-  
+
   generateLabyrinth(level);
   // Reconstruire les formes avec la texture
   buildShapes();
@@ -247,77 +283,77 @@ void nextLevel() {
 
 void buildShapes() {
   // Réinitialisation des formes existantes
-  laby0 = createShape();
+  murs = createShape();
+  murs.beginShape(QUADS);
+  murs.texture(textureMur);
+  murs.noStroke();
   ceiling0 = createShape();
   ladder0 = createShape();
 
   ceiling0.beginShape(QUADS);
 
-  laby0.beginShape(QUADS);
-  laby0.texture(texture0);
-  laby0.noStroke();
 
 
   for (int j = 0; j < labSize; j++) {
     for (int i = 0; i < labSize; i++) {
+      murs.texture(textureMur);
       if (labyrinthe[j][i] == '#'||labyrinthe[j][i] == 'X') {
-        laby0.fill(i * 25, j * 25, 255 - i * 10 + j * 10);
 
         // Face supérieure du mur
         if (j == 0 || labyrinthe[j - 1][i] == ' ' || labyrinthe[j - 1][i] == 'X') {
-          laby0.normal(0, -1, 0);
+          murs.normal(0, -1, 0);
           for (int k = 0; k < 1; k++) {
             for (int l = -1; l < 1; l++) {
-              laby0.vertex(i * wallH - wallH/2 + (k + 0)*wallH, j * wallH - wallH/2, (l + 0)*wallH,
-                k * texture0.width, (0.5 + l/ (2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH - wallH/2 + (k + 1)*wallH, j * wallH - wallH/2, (l + 0)*wallH,
-                (k + 1) * texture0.width, (0.5 + l/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH - wallH/2 + (k + 1)*wallH, j * wallH - wallH/2, (l + 1)*wallH,
-                (k + 1) * texture0.width, (0.5 + (l+1)/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH - wallH/2 + (k + 0)*wallH, j * wallH - wallH/2, (l + 1)*wallH,
-                k * texture0.width, (0.5 + (l+1)/(2.0*1)) * texture0.height);
+              murs.vertex(i * wallH - wallH/2 + (k + 0)*wallH, j * wallH - wallH/2, (l + 0)*wallH,
+                k * textureMur.width, (0.5 + l/ (2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH - wallH/2 + (k + 1)*wallH, j * wallH - wallH/2, (l + 0)*wallH,
+                (k + 1) * textureMur.width, (0.5 + l/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH - wallH/2 + (k + 1)*wallH, j * wallH - wallH/2, (l + 1)*wallH,
+                (k + 1) * textureMur.width, (0.5 + (l+1)/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH - wallH/2 + (k + 0)*wallH, j * wallH - wallH/2, (l + 1)*wallH,
+                k * textureMur.width, (0.5 + (l+1)/(2.0*1)) * textureMur.height);
             }
           }
         }
 
         // Face inférieure du mur
         if (j == labSize - 1 || labyrinthe[j + 1][i] == ' ' || labyrinthe[j + 1][i] == 'X') {
-          laby0.normal(0, 1, 0);
+          murs.normal(0, 1, 0);
           for (int k = 0; k < 1; k++) {
             for (int l = -1; l < 1; l++) {
-              laby0.vertex(i * wallH - wallH/2 + (k + 0)*wallH, j * wallH + wallH/2, (l + 1)*wallH,
-                (k + 0) * texture0.width, (0.5 + (l+1)/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH - wallH/2 + (k + 1)*wallH, j * wallH + wallH/2, (l + 1)*wallH,
-                (k + 1) * texture0.width, (0.5 + (l+1)/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH - wallH/2 + (k + 1)*wallH, j * wallH + wallH/2, (l + 0)*wallH,
-                (k + 1) * texture0.width, (0.5 + (l+0)/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH - wallH/2 + (k + 0)*wallH, j * wallH + wallH/2, (l + 0)*wallH,
-                (k + 0) * texture0.width, (0.5 + (l+0)/(2.0*1)) * texture0.height);
+              murs.vertex(i * wallH - wallH/2 + (k + 0)*wallH, j * wallH + wallH/2, (l + 1)*wallH,
+                (k + 0) * textureMur.width, (0.5 + (l+1)/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH - wallH/2 + (k + 1)*wallH, j * wallH + wallH/2, (l + 1)*wallH,
+                (k + 1) * textureMur.width, (0.5 + (l+1)/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH - wallH/2 + (k + 1)*wallH, j * wallH + wallH/2, (l + 0)*wallH,
+                (k + 1) * textureMur.width, (0.5 + (l+0)/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH - wallH/2 + (k + 0)*wallH, j * wallH + wallH/2, (l + 0)*wallH,
+                (k + 0) * textureMur.width, (0.5 + (l+0)/(2.0*1)) * textureMur.height);
             }
           }
         }
 
         // Face gauche du mur
         if ((i == 0 || labyrinthe[j][i - 1] == ' ') && labyrinthe[j][i] != 'X') {
-          laby0.normal(-1, 0, 0);
+          murs.normal(-1, 0, 0);
           for (int k = 0; k < 1; k++) {
             for (int l = -1; l < 1; l++) {
-              laby0.vertex(i * wallH - wallH/2, j * wallH - wallH/2 + (k + 0)*wallH, (l + 1)*wallH,
-                (k + 0) * texture0.width, (0.5 + (l+1)/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH - wallH/2, j * wallH - wallH/2 + (k + 1)*wallH, (l + 1)*wallH,
-                (k + 1) * texture0.width, (0.5 + (l+1)/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH - wallH/2, j * wallH - wallH/2 + (k + 1)*wallH, (l + 0)*wallH,
-                (k + 1) * texture0.width, (0.5 + (l+0)/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH - wallH/2, j * wallH - wallH/2 + (k + 0)*wallH, (l + 0)*wallH,
-                (k + 0) * texture0.width, (0.5 + (l+0)/(2.0*1)) * texture0.height);
+              murs.vertex(i * wallH - wallH/2, j * wallH - wallH/2 + (k + 0)*wallH, (l + 1)*wallH,
+                (k + 0) * textureMur.width, (0.5 + (l+1)/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH - wallH/2, j * wallH - wallH/2 + (k + 1)*wallH, (l + 1)*wallH,
+                (k + 1) * textureMur.width, (0.5 + (l+1)/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH - wallH/2, j * wallH - wallH/2 + (k + 1)*wallH, (l + 0)*wallH,
+                (k + 1) * textureMur.width, (0.5 + (l+0)/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH - wallH/2, j * wallH - wallH/2 + (k + 0)*wallH, (l + 0)*wallH,
+                (k + 0) * textureMur.width, (0.5 + (l+0)/(2.0*1)) * textureMur.height);
             }
           }
         } else if (labyrinthe[j][i] == 'X') {
-          laby0.fill(192);
-          laby0.vertex(i * wallH - wallH/2, j * wallH - wallH/2, -wallH, 0, 0);
-          laby0.vertex(i * wallH + wallH/2, j * wallH - wallH/2, -wallH, 0, 1);
-          laby0.vertex(i * wallH + wallH/2, j * wallH + wallH/2, -wallH, 1, 1);
-          laby0.vertex(i * wallH - wallH/2, j * wallH + wallH/2, -wallH, 1, 0);
+          murs.fill(192);
+          murs.vertex(i * wallH - wallH/2, j * wallH - wallH/2, -wallH, 0, 0);
+          murs.vertex(i * wallH + wallH/2, j * wallH - wallH/2, -wallH, 0, 1);
+          murs.vertex(i * wallH + wallH/2, j * wallH + wallH/2, -wallH, 1, 1);
+          murs.vertex(i * wallH - wallH/2, j * wallH + wallH/2, -wallH, 1, 0);
 
           // Dessus des murs pour le sol (plafond alternatif)
           ceiling0.fill(32);
@@ -329,35 +365,22 @@ void buildShapes() {
 
         // Face droite du mur
         if (i == labSize - 1 || labyrinthe[j][i + 1] == ' ') {
-          laby0.normal(1, 0, 0);
+          murs.normal(1, 0, 0);
           for (int k = 0; k < 1; k++) {
             for (int l = -1; l < 1; l++) {
-              laby0.vertex(i * wallH + wallH/2, j * wallH - wallH/2 + (k + 0)*wallH, (l + 0)*wallH,
-                (k + 0) * texture0.width, (0.5 + (l+0)/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH + wallH/2, j * wallH - wallH/2 + (k + 1)*wallH, (l + 0)*wallH,
-                (k + 1) * texture0.width, (0.5 + (l+0)/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH + wallH/2, j * wallH - wallH/2 + (k + 1)*wallH, (l + 1)*wallH,
-                (k + 1) * texture0.width, (0.5 + (l+1)/(2.0*1)) * texture0.height);
-              laby0.vertex(i * wallH + wallH/2, j * wallH - wallH/2 + (k + 0)*wallH, (l + 1)*wallH,
-                (k + 0) * texture0.width, (0.5 + (l+1)/(2.0*1)) * texture0.height);
+              murs.vertex(i * wallH + wallH/2, j * wallH - wallH/2 + (k + 0)*wallH, (l + 0)*wallH,
+                (k + 0) * textureMur.width, (0.5 + (l+0)/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH + wallH/2, j * wallH - wallH/2 + (k + 1)*wallH, (l + 0)*wallH,
+                (k + 1) * textureMur.width, (0.5 + (l+0)/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH + wallH/2, j * wallH - wallH/2 + (k + 1)*wallH, (l + 1)*wallH,
+                (k + 1) * textureMur.width, (0.5 + (l+1)/(2.0*1)) * textureMur.height);
+              murs.vertex(i * wallH + wallH/2, j * wallH - wallH/2 + (k + 0)*wallH, (l + 1)*wallH,
+                (k + 0) * textureMur.width, (0.5 + (l+1)/(2.0*1)) * textureMur.height);
             }
           }
         }
-      } else {
-        // Sol
-        laby0.fill(192);
-        laby0.vertex(i * wallH - wallH/2, j * wallH - wallH/2, -wallH, 0, 0);
-        laby0.vertex(i * wallH + wallH/2, j * wallH - wallH/2, -wallH, 0, 1);
-        laby0.vertex(i * wallH + wallH/2, j * wallH + wallH/2, -wallH, 1, 1);
-        laby0.vertex(i * wallH - wallH/2, j * wallH + wallH/2, -wallH, 1, 0);
-
-        // Dessus des murs pour le sol (plafond alternatif)
-        ceiling0.fill(32);
-        ceiling0.vertex(i * wallH - wallH/2, j * wallH - wallH/2, wallH);
-        ceiling0.vertex(i * wallH + wallH/2, j * wallH - wallH/2, wallH);
-        ceiling0.vertex(i * wallH + wallH/2, j * wallH + wallH/2, wallH);
-        ceiling0.vertex(i * wallH - wallH/2, j * wallH + wallH/2, wallH);
       }
+  
 
       // On place l'échelle sur le mur de droite de la cellule marquée 'X'
       if (labyrinthe[j][i] == 'X') {
@@ -366,29 +389,50 @@ void buildShapes() {
         float centerX = i * wallH;
         float centerY = j * wallH;
         float wallX = centerX + wallH/2;  // Position du mur est
-        
+
         // Dimensions de l'échelle
         float ladderWidth = wallH * 0.6;  // 60% de la largeur du mur
         float ladderHeight = wallH * 1.5; // 150% de la hauteur du mur
         float ladderDepth = wallH * 0.05; // 5% de l'épaisseur du mur
         int numRungs = 5;                 // Nombre de barreaux
-        
+
         // Créer l'échelle
         ladder3D = new Ladder3D(
-          wallX - ladderDepth/2,  // Positionner contre le mur
-          centerY,                // Centrer sur la cellule
-          -wallH + ladderHeight/2,// Base de l'échelle au niveau du sol
+          wallX - ladderDepth/2, // Positionner contre le mur
+          centerY, // Centrer sur la cellule
+          -wallH + ladderHeight/2, // Base de l'échelle au niveau du sol
           ladderWidth,
           ladderHeight,
           ladderDepth,
           numRungs
-        );
-        
+          );
       }
     }
   }
+  murs.endShape();
+  
+  // —– LE SOL (sans texture) —–
+  ceiling0.noStroke();
+  for(int j = 0; j < labSize; j++){
+    for(int i = 0; i < labSize; i++){
+      if(labyrinthe[j][i] == ' '){
+        // Sol
+        ceiling0.fill(32);
+        ceiling0.vertex(i * wallH - wallH/2, j * wallH - wallH/2, -wallH, 0, 0);
+        ceiling0.vertex(i * wallH + wallH/2, j * wallH - wallH/2, -wallH, 0, 1);
+        ceiling0.vertex(i * wallH + wallH/2, j * wallH + wallH/2, -wallH, 1, 1);
+        ceiling0.vertex(i * wallH - wallH/2, j * wallH + wallH/2, -wallH, 1, 0);
 
-  laby0.endShape();
+        // Dessus des murs pour le sol (plafond alternatif)
+        ceiling0.fill(32);
+        ceiling0.vertex(i * wallH - wallH/2, j * wallH - wallH/2, wallH);
+        ceiling0.vertex(i * wallH + wallH/2, j * wallH - wallH/2, wallH);
+        ceiling0.vertex(i * wallH + wallH/2, j * wallH + wallH/2, wallH);
+        ceiling0.vertex(i * wallH - wallH/2, j * wallH + wallH/2, wallH);
+      }
+    }
+  }
+ 
   ceiling0.endShape();
 }
 
@@ -473,6 +517,8 @@ boolean collides(float x, float y, char obj) {
 
 void triggerPlayerDeath() {
   if (!isPlayerDead) {
+    sfxCatch.play();
+
     isPlayerDead = true;
     deathTimestamp = millis(); // Enregistre le moment de la mort
     scene = 0;
@@ -511,8 +557,8 @@ void draw() {
     updateDiscovery();
     showMinimap();
   }
-  
-  
+
+
 
   // Configuration de la caméra en vue à la première personne
   float camX = posX * wallH;
@@ -521,105 +567,114 @@ void draw() {
   float lookX = camX + cos(heading) * cos(pitch);
   float lookY = camY + sin(heading) * cos(pitch);
   float lookZ = camZ + sin(pitch);
-  
+
   perspective(PI/3, (float)width/height, 1, 1000);
   camera(camX, camY, camZ, lookX, lookY, lookZ, 0, 0, -1);
-  
+  handleFootsteps();
+
 
   if (scene == 0) {
 
     // test pour l'entrée dans la pyramide
     if (newX+2000 < 2000 && newY+2000 > 2000) {
+
+      // arrêter l’ancienne ambiance
+      if (scene == 0) bgOutside.stop();
+      bgInside.loop();
+
       scene = 1;
       posX = 1;
       posY = 1;
       newX = 1;
       newY = 1;
     }
-    
+
     perspective(PI/3, (float)width/height, 1, 10000);
     lights();
     ambientLight(100, 100, 100);
-    
+
     posX = newX;
     posY = newY;
-    
+
     // Définir une couleur bleu ciel pour l'arrière-plan
     background(135, 206, 235);
-    
+
     float sunDirX_norm = 1.0;
     float sunDirY_norm = 0.8;
     float sunDirZ_norm = -0.75;
 
     directionalLight(255, 255, 0,
-                     sunDirX_norm, sunDirY_norm, sunDirZ_norm);
-      
+      sunDirX_norm, sunDirY_norm, sunDirZ_norm);
+
     //  Dessin du Soleil 3D
     pushMatrix();
     // Positionner le soleil très loin dans la direction *opposée* à la lumière directionnelle
     float sunDistance = 6000;
     translate(-sunDirX_norm * sunDistance,
-              -sunDirY_norm * sunDistance,
-              -sunDirZ_norm * sunDistance);
-  
+      -sunDirY_norm * sunDistance,
+      -sunDirZ_norm * sunDistance);
+
     // Faire briller le soleil et ignorer l'éclairage de la scène
     noStroke();
     fill(255, 255, 0); // Jaune vif
     emissive(255, 255, 0); // Le faire émettre sa propre lumière
     sphere(200);         // Taille du soleil visuel (ajuster au besoin)
     emissive(0, 0, 0);   // !!! IMPORTANT: Réinitialiser l'émission pour les objets suivants !!!
-    popMatrix();  
+    popMatrix();
     noStroke();
-    
-  
-  
-  
+
+
+
+
     pyramide.display();
-    desertEffect.set("time", millis() / 1000.0); 
-    
+    desertEffect.set("time", millis() / 1000.0);
+
     // Appliquer le shader sur toute la scène
     filter(desertEffect);
-
   }
-  
-  if (scene == 1) {
-       // --- Vérification de la collision Joueur-Momie ---
+
+  else if (scene == 1) {
+    moveSpeed = 0.25;
+    // --- Vérification de la collision Joueur-Momie ---
     if (!isPlayerDead) { // Ne vérifie que si le joueur n'est pas déjà mort
-        float distanceSq = sq(posX - momie.posX) + sq(posY - momie.posY);
-        float momieRadius = 0.3;
-        float collisionRadiusSum = playerRadius + momieRadius;
-        if (distanceSq < sq(collisionRadiusSum)) {
-            triggerPlayerDeath();
-        }
+      float distanceSq = sq(posX - momie.posX) + sq(posY - momie.posY);
+      float momieRadius = 0.3;
+      float collisionRadiusSum = playerRadius + momieRadius;
+      if (distanceSq < sq(collisionRadiusSum)) {
+        triggerPlayerDeath();
+      }
     }
 
-    
+
     if (newX < 1.5 && newY < 0.5) {
       scene = 0;
     }
-    
+
     // Vérification de collision
     if (!isClimbing) {
-      if (!collides(newX, newY,'j')) {
+      if (!collides(newX, newY, 'j')) {
         posX = newX;
         posY = newY;
       } else {
         // Gérer un glissement en vérifiant séparément l'axe X et Y
-        if (!collides(newX, posY,'j')) posX = newX;
-        if (!collides(posX, newY,'j')) posY = newY;
+        if (!collides(newX, posY, 'j')) posX = newX;
+        if (!collides(posX, newY, 'j')) posY = newY;
       }
     }
-    
-    
+
+
     noLights();
     pointLight(255, 255, 255, posX*wallH, posY*wallH, 15);
-  
+
     noStroke();
-  
+
     int cellX = int(posX);
     int cellY = int(posY);
-    
+
     if (labyrinthe[cellY][cellX] == 'X' && !isClimbing) {
+
+      sfxClimb.play();
+
       isClimbing = true;
     }
 
@@ -640,99 +695,129 @@ void draw() {
       }
     }
 
-  
-  
-      // Affichage des formes compilées du labyrinthe
-      shape(laby0, 0, 0);
-      shape(ceiling0, 0, 0);
-  
-  
 
-      ladder3D.display();
 
-  
-      // Appel de l'affichage du débogage pour les collisions
-      //debug.drawPlayerCollision(posX, posY, wallH, playerRadius);
-      //debug.drawWallCollisions(labyrinthe, labSize, wallH);
-  
-      // Mise à jour et affichage de la momie
-      momie.update();
-      momie.display();
-      
-      
-      
-      horrorMazeShader.set("time", millis() / 1000.0);
-      horrorMazeShader.set("pulseSpeed", pulseSpeed);
-      horrorMazeShader.set("flickerIntensity", flickerIntensity);
-      
-      // Appliquer le shader
-      filter(horrorMazeShader);
-    }
+    // Affichage des formes compilées du labyrinthe
+    shape(murs);
+    shape(ceiling0);
+
+
+
+    ladder3D.display();
+
+
+    // Appel de l'affichage du débogage pour les collisions
+    //debug.drawPlayerCollision(posX, posY, wallH, playerRadius);
+    //debug.drawWallCollisions(labyrinthe, labSize, wallH);
+
+    // Mise à jour et affichage de la momie
+    momie.update();
+    momie.display();
+
+
+
+    horrorMazeShader.set("time", millis() / 1000.0);
+    horrorMazeShader.set("pulseSpeed", pulseSpeed);
+    horrorMazeShader.set("flickerIntensity", flickerIntensity);
+
+    // Appliquer le shader
+    filter(horrorMazeShader);
+  }
   if (isPlayerDead) {
     // Vérifier si le délai d'affichage est toujours en cours
     if (millis() < deathTimestamp + DEATH_MESSAGE_DURATION) {
-  
+
       // --- Configuration pour dessin 2D par-dessus la 3D ---
       pushMatrix(); // Sauvegarde la matrice de transformation actuelle
       pushStyle();  // Sauvegarde les styles actuels (couleur, taille texte, etc.)
-  
+
       hint(DISABLE_DEPTH_TEST); // Permet de dessiner en 2D sans se soucier de la profondeur 3D
       camera(); // Réinitialise la caméra en mode 2D par défaut
       ortho();  // Utilise une projection orthographique (standard pour 2D)
-  
+
       // --- Dessiner le texte ---
-      textSize(80);              // Taille du texte 
+      textSize(80);              // Taille du texte
       fill(200, 0, 0, 220);      // Couleur rouge semi-transparente
       textAlign(CENTER, CENTER); // Centrer le texte horizontalement et verticalement
       text("YOU DIED", width / 2, height / 2); // Afficher au centre
-  
+
       // --- Restaurer l'état précédent ---
       hint(ENABLE_DEPTH_TEST); // Réactive le test de profondeur pour le prochain cycle de dessin 3D
       popStyle(); // Restaure les styles
       popMatrix(); // Restaure la matrice de transformation
-  
+
       // !! Important: Rétablir la perspective pour le prochain frame 3D !!
       // Sinon la caméra restera en mode 2D/ortho
       perspective(PI/3, (float)width/height, 1, (scene == 0 ? 10000 : 1000));
       // La caméra 3D sera recalculée au début du prochain draw() de toute façon
-  
-    } 
+    }
   }
 }
 
+/* ---------------  FONCTIONS PIEDS --------------- */
+void handleFootsteps() {
+  // distance parcourue depuis la dernière frame
+  float dx = posX - prevX;
+  float dy = posY - prevY;
+  float d  = sqrt(dx*dx + dy*dy);
+
+  // on met à jour pour la prochaine frame
+  prevX = posX;
+  prevY = posY;
+
+  // si le joueur bouge, on cumule
+  if (d > 0.01) distAccum += d;
+
+  // assez avancé pour jouer un pas ?
+  if (distAccum >= stepDist) {
+    playFootstep();
+    distAccum = 0;
+  }
+}
+
+void playFootstep() {
+  int idx = int(random(NB_STEPS));     // variation aléatoire
+  if (scene == 0) {                    // extérieur
+    stepSand[idx].rate(random(0.95, 1.05));
+    stepSand[idx].play();
+  } else {                             // intérieur
+    stepStone[idx].rate(random(0.95, 1.05));
+    stepStone[idx].play();
+  }
+}
 void keyPressed() {
   // Utilisation des touches WASD pour le déplacement
-    if (key == 'z' || key == 'Z') {
-      moveForward = true;
-    }
-    if (key == 's' || key == 'S') {
-      moveBackward = true;
-    }
-    if (key == 'q' || key == 'Q') {
-      moveLeft = true;
-    }
-    if (key == 'd' || key == 'D') {
-      moveRight = true;
-    }
-  
-    if (keyCode == ESC) {
-      exit();
-    }
+  if (key == 'z' || key == 'Z') {
+    moveForward = true;
+  }
+  if (key == 's' || key == 'S') {
+    moveBackward = true;
+  }
+  if (key == 'q' || key == 'Q') {
+    moveLeft = true;
+  }
+  if (key == 'd' || key == 'D') {
+    moveRight = true;
+  }
+
+  if (keyCode == ESC) {
+    exit();
+  }
 }
 
 void keyReleased() {
-    if (key == 'z' || key == 'Z') {
-      moveForward = false;
-    }
-    if (key == 's' || key == 'S') {
-      moveBackward = false;
-    }
-    if (key == 'q' || key == 'Q') {
-      moveLeft = false;
-    }
-    if (key == 'd' || key == 'D') {
-      moveRight = false;
-    }
+  if (key == 'z' || key == 'Z') {
+    moveForward = false;
+  }
+  if (key == 's' || key == 'S') {
+    moveBackward = false;
+  }
+  if (key == 'q' || key == 'Q') {
+    moveLeft = false;
+  }
+  if (key == 'd' || key == 'D') {
+    moveRight = false;
+  }
 }
 
 void mouseMoved() {
